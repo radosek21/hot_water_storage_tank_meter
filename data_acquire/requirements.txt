@@ -1,0 +1,2 @@
+modbus_tk==1.1.1
+mysql_connector_repackaged==0.3.1
