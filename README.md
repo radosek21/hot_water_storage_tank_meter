@@ -45,7 +45,25 @@ Ve zdrojovém kódu je zapotřebí doplnit:
 - seznam adresy všech deseti čidel DS18B20 (seznam **sensorsAddr[TEMP_SENSORS_CNT]**)
 - případné korekce čidel (seznam **sensorsCorrections[TEMP_SENSORS_CNT]**)
 
-Veškerá měřená data z čidel jsou dostupná přes ModbusTCP (port 502) v input registrech 100 (čidlo S1) až 109 (čidlo S10). Teploty jsou v registrech ukládány v setinách °C.
+Veškerá měřená i vypočtená data z čidel jsou dostupná přes ModbusTCP (port 502).
+
+#### Input registry:
+
+| Jméno registru      | Adresa   | Jednotka | Popis                                |
+| ------------------- | -------- | -------- | ------------------------------------ |
+| Sensors count       | 1        |          | Počet právě dostupných čidel DS18B20 |
+| Average temperature | 2        | 0.01°C   | Průměrná teplota všech čidel         |
+| Capacity            | 3        | 0.01%    | Procentuální nabití nádrže           |
+| Sensors data        | 100..109 | 0.01°C   | Teploty jednotlivých čidel S1 - S10  |
+
+#### Holding registry:
+
+| Jméno registru          | Adresa | Jednotka | Popis                                                        |
+| ----------------------- | ------ | -------- | ------------------------------------------------------------ |
+| Min average temperature | 1      | 1°C      | Nejnižší průměrná teplota v nádrži pro výpočet nabití. Parametr **MinAvgTemp** |
+| Max average temperature | 2      | 1°C      | Nevyšší průměrná teplota v nádrži pro výpočet nabití. Parametr **MaxAvgTemp** |
+
+Konfigurační parametry min a max average temperature jsou uloženy ve vnitřní EEPROM procesoru. Jejich defaultní hodnoty jsou 40 a 77°C.
 
 ## Sběr dat
 
@@ -65,16 +83,11 @@ Pro výpočet procentuálního nabití nádrže jsem po zvážení několika alg
 
 Výpočet vypadá následovně:
 $$
-cap = (avg[T1:T10] - TempMin) / (TempMax - TempMin) * 100
+cap = (avg[S1:S10] - MinAvgTemp) / (MaxAvgTemp  - MinAvgTemp) * 100
 $$
 
 
-Konstanty **TempMax** a **TempMin** jsou v kódu měřidla k nalezení pod názvy **HEATER_TANK_MAX_AVG_TEMP** a **HEATER_TANK_MIN_AVG_TEMP**. V mém případě se osvědčili tyto hodnoty: 
-
-```
-#define HEATER_TANK_MIN_AVG_TEMP    45
-#define HEATER_TANK_MAX_AVG_TEMP    77
-```
+Parametry **MaxAvgTemp** a **MinAvgTemp** jsou v uloženy ve vnitřní paměti EEPROM procesoru. Jsou konfigurovatelné pomocí holding registrů 1 a 2.
 
 Data z Grafany pak vypadají například takto:
 
