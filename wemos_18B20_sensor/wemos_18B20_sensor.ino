@@ -3,11 +3,26 @@
 #include <ESP8266WiFi.h>
 #include <ModbusIP_ESP8266.h>
 #include "peripherals.h"
+#include <EEPROM.h>
 
-#define HEATER_TANK_MIN_AVG_TEMP    45
-#define HEATER_TANK_MAX_AVG_TEMP    77
+#define EEPROM_MAGIC_NUMBER                 0xDEADBEEF
+#define DEFAULT_HEATER_TANK_MIN_AVG_TEMP    40
+#define DEFAULT_HEATER_TANK_MAX_AVG_TEMP    77
 
-#define MODBUS_DATA_IREG_BASE_ADDR  100
+#define MB_IREG_SENSORS_CNT_ADDR   1
+#define MB_IREG_AVG_TEMP_ADDR      2
+#define MB_IREG_CAPACITY_ADDR      3
+#define MB_IREG_SENSORS_ADDR       100
+#define MB_HREG_MIN_TEMP_ADDR      1
+#define MB_HREG_MAX_TEMP_ADDR      2
+
+
+typedef struct {
+  uint32_t magic;
+  uint16_t minAvgTemp;
+  uint16_t maxAvgTemp;
+} EepromData_t;
+
 
 // Set WiFi credentials
 #define WIFI_SSID "MY SSID"
@@ -43,14 +58,20 @@ float sensorsCorrections[TEMP_SENSORS_CNT] = {
 
 ModbusIP mb;
 long ts;
+EepromData_t eepromData;
+uint16_t iRegAvgTemp;
+uint16_t iRegSensorsCnt;
 
 void setup() {
   int timeout = millis() + 60000;
+  iRegAvgTemp = 0;
+  iRegSensorsCnt = 0;
   Serial.begin(115200);
   Serial.println("");
-
-  delay(1000);
   
+  
+  delay(1000);
+  readParams();
   tempSensors.begin();
 
   // Begin WiFi
@@ -76,7 +97,14 @@ void setup() {
   // Start Modbus TCP server
   mb.server();    
   // Register modbus input registers
-  mb.addIreg(MODBUS_DATA_IREG_BASE_ADDR, 0,  TEMP_SENSORS_CNT); 
+  mb.addIreg(MB_IREG_SENSORS_CNT_ADDR, 0);
+  mb.addIreg(MB_IREG_AVG_TEMP_ADDR, 0);
+  mb.addIreg(MB_IREG_CAPACITY_ADDR, 0);
+  mb.addIreg(MB_IREG_SENSORS_ADDR, 0, TEMP_SENSORS_CNT); 
+  mb.addHreg(MB_HREG_MIN_TEMP_ADDR, eepromData.minAvgTemp);
+  mb.addHreg(MB_HREG_MAX_TEMP_ADDR, eepromData.maxAvgTemp);
+  mb.onSetHreg(MB_HREG_MIN_TEMP_ADDR, cbWriteMinTemp, 1);
+  mb.onSetHreg(MB_HREG_MAX_TEMP_ADDR, cbWriteMaxTemp, 1);
   
   // Bind all DS18B20 temperature sensors
   for (int index = 0; index < TEMP_SENSORS_CNT; index++) {
@@ -119,21 +147,26 @@ void loop() {
         Serial.print(" : ");
         Serial.print(temp);
         Serial.println("C");
-        mb.Ireg(MODBUS_DATA_IREG_BASE_ADDR + i, (int16_t)(temp * 100));
+        mb.Ireg(MB_IREG_SENSORS_ADDR + i, (int16_t)(temp * 100));
         avgTemp += temp;
         avgCnt++;
       }
     }
-    // Do an average temperature 
-    avgTemp /= avgCnt;
-    // Transform measured temperature value to the percentage of heater tank capacity
-    heatCap = ((avgTemp - HEATER_TANK_MIN_AVG_TEMP) * 100 / (HEATER_TANK_MAX_AVG_TEMP - HEATER_TANK_MIN_AVG_TEMP));
-    if (heatCap > 0) {
+    mb.Ireg(MB_IREG_SENSORS_CNT_ADDR, avgCnt);  
+    if (avgCnt > (TEMP_SENSORS_CNT / 2)) {
+      // Do an average temperature when at least half of sensors are present
+      avgTemp /= avgCnt;
+      // Transform measured temperature value to the percentage of heater tank capacity
+      heatCap = ((avgTemp - eepromData.minAvgTemp) * 100 / (eepromData.maxAvgTemp - eepromData.minAvgTemp));
+      mb.Ireg(MB_IREG_AVG_TEMP_ADDR, (int16_t)(avgTemp * 100));
+      mb.Ireg(MB_IREG_CAPACITY_ADDR, (int16_t)(heatCap * 100));
       // Show current capacity
-      display.number((int)constrain(heatCap, 0, 100), 1);
+      display.number((int)constrain(heatCap, -150, 999), 1);
     } else {
-      // There is no capacity. Display "---"
+      // Half of sensors are missed. Display "---"
       display.code(display.emptyPattern);
+      mb.Ireg(MB_IREG_AVG_TEMP_ADDR, 0);
+      mb.Ireg(MB_IREG_CAPACITY_ADDR, 0);
     }
   }
 }
@@ -142,4 +175,46 @@ int StrToHex(String str) {
   char buf[3];
   str.toCharArray(buf, 3);
   return (int)strtol(buf, 0, 16);
+}
+
+void readParams()
+{
+  //Init EEPROM
+  EEPROM.begin(sizeof(EepromData_t));
+  Serial.println("EEPROM: reading");
+  EEPROM.get(0, eepromData);
+  if(eepromData.magic != EEPROM_MAGIC_NUMBER) {
+    Serial.println("EEPROM: using defaults.");
+    eepromData.magic = EEPROM_MAGIC_NUMBER;
+    eepromData.minAvgTemp = DEFAULT_HEATER_TANK_MIN_AVG_TEMP;
+    eepromData.maxAvgTemp = DEFAULT_HEATER_TANK_MAX_AVG_TEMP;
+  }
+  EEPROM.end();
+}
+
+void writeParams()
+{
+  //Init EEPROM
+  Serial.println("EEPROM: writing");
+  EEPROM.begin(sizeof(EepromData_t));
+  EEPROM.put(0, eepromData);
+  EEPROM.commit();
+  EEPROM.end();
+}
+
+uint16_t cbWriteMinTemp(TRegister* reg, uint16_t val) {
+  Serial.print("Write min temp: ");
+  Serial.println(val);
+  eepromData.minAvgTemp = val;
+  writeParams();
+  return val;
+}
+
+uint16_t cbWriteMaxTemp(TRegister* reg, uint16_t val) {
+  Serial.print("Write max temp: ");
+  Serial.println(val);
+  Serial.println(val);
+  eepromData.maxAvgTemp = val;
+  writeParams();
+  return val;
 }

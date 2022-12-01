@@ -22,15 +22,18 @@ if __name__ == '__main__':
   queryData = []
 
   while True:
-    data = ms.readSensors()
-    if data:
-      data = ['\'' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S') + '\''].extend(", ".join(map(str, data)))
+    data = {}
+    data['time'] = '\'' + datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S') + '\''
+    msData = ms.readSensors()
+    if msData:
+      data = {**data, **msData}
+      data = ", ".join(map(str, data.values()))
       queryData.append(f'({data})')
       time.sleep(10)
       commitCnt += 1
       # Every 1 minute commmit all data at once
       if commitCnt >= 6:
-        query = f'INSERT INTO {dbName}.{dbTable}(time, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10) VALUES {", ".join(map(str, queryData))};'
+        query = f'INSERT INTO {dbName}.{dbTable}(time, sens_cnt, avg_temp, capacity, s1, s2, s3, s4, s5, s6, s7, s8, s9, s10) VALUES {", ".join(map(str, queryData))};'
         cursorObject.execute(query)
         dataBase.commit()
         commitCnt = 0
